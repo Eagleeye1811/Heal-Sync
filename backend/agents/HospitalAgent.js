@@ -17,6 +17,13 @@ class HospitalAgent {
   }
 
   start() {
+    // Log initialization
+    const h = this.worldState.hospitals[this.id];
+    this.log(
+      `✅ Hospital Agent ${this.id} (${h.name}) initialized - Monitoring ${this.getTotalBeds(h)} beds in ${h.zone}`,
+      { agent: 'Hospital', type: 'INIT', entityId: this.id }
+    );
+
     // Runs every 8 seconds
     setInterval(() => this.tick(), 8000);
   }
@@ -33,12 +40,20 @@ class HospitalAgent {
     const inflowRate = h.patientMetrics.inflowPerHour;
     const predictedBeds = usedBeds + (0.5 * inflowRate); // Next 30 minutes
     const occupancy = predictedBeds / totalBeds;
+    const occupancyPercent = Math.round(occupancy * 100);
+
+    // ALWAYS log current status (not just problems)
+    const status = occupancy > 0.85 ? '🔴 HIGH' : occupancy > 0.7 ? '🟡 MODERATE' : '🟢 NORMAL';
+    this.log(
+      `${h.name}: ${status} occupancy ${occupancyPercent}% (${usedBeds}/${totalBeds} beds) | ICU: ${h.beds.icu.used}/${h.beds.icu.total} | ER Wait: ${h.patientMetrics.erWaitingTime}min`,
+      { agent: 'Hospital', type: 'STATUS', entityId: this.id, occupancy: occupancyPercent }
+    );
 
     // Check for overload risk
     if (occupancy > 0.85) {
       this.log(
-        `[Hospital ${this.id}] Overload risk: predicted ${Math.round(occupancy * 100)}% occupancy (${Math.round(predictedBeds)}/${totalBeds} beds)`,
-        { agent: 'Hospital', type: 'OVERLOAD_RISK', hospitalId: this.id, occupancy }
+        `⚠️ ${h.name}: CAPACITY ALERT! Predicted ${occupancyPercent}% occupancy - Preparing for overflow`,
+        { agent: 'Hospital', type: 'OVERLOAD_RISK', entityId: this.id, occupancy }
       );
 
       publish('HOSPITAL_OVERLOAD_RISK', {
@@ -106,6 +121,17 @@ class HospitalAgent {
     // Only respond if outbreak is in our zone or adjacent
     if (h.zone !== event.zone) return;
 
+    this.log(
+      `🏥 ${h.name}: OUTBREAK ALERT RECEIVED for ${disease.toUpperCase()} in ${event.zone}! Activating emergency response`,
+      { 
+        agent: 'Hospital', 
+        type: 'ALERT_RECEIVED', 
+        entityId: this.id, 
+        disease,
+        zone: event.zone
+      }
+    );
+
     // Prepare hospital for this disease
     if (h.diseasePrep[disease]) {
       h.diseasePrep[disease].prepared = true;
@@ -115,33 +141,70 @@ class HospitalAgent {
       if (['dengue', 'malaria', 'typhoid', 'covid', 'influenza'].includes(disease)) {
         h.diseasePrep[disease].wardReady = true;
         
-        // Reserve isolation beds
+        // Reserve isolation beds AND actually occupy some to simulate preparation
         const isolationBeds = h.beds.isolation;
-        const bedsToReserve = Math.min(10, isolationBeds.total - isolationBeds.used - isolationBeds.reserved);
+        const bedsToReserve = Math.min(10, isolationBeds.total - isolationBeds.occupied);
         if (bedsToReserve > 0) {
-          isolationBeds.reserved += bedsToReserve;
+          // Actually occupy beds to prepare the ward
+          isolationBeds.occupied = Math.min(isolationBeds.total, isolationBeds.occupied + Math.floor(bedsToReserve / 2));
+          
+          this.log(
+            `🛏️ ${h.name}: Preparing isolation ward for ${disease} - Occupancy increased to ${isolationBeds.occupied}/${isolationBeds.total} beds`,
+            { 
+              agent: 'Hospital', 
+              type: 'BED_ALLOCATION', 
+              entityId: this.id, 
+              disease,
+              bedsOccupied: isolationBeds.occupied
+            }
+          );
+        }
+        
+        // Also prepare general beds
+        const generalBeds = h.beds.general;
+        const generalToPrep = Math.min(5, generalBeds.total - generalBeds.occupied);
+        if (generalToPrep > 0) {
+          generalBeds.occupied = Math.min(generalBeds.total, generalBeds.occupied + generalToPrep);
         }
       }
 
       this.log(
-        `[Hospital ${this.id}] Preparing for ${disease} outbreak in ${event.zone}. Ward ready, staff alerted.`,
+        `✅ ${h.name}: ${disease.toUpperCase()} ward prepared - Staff alerted, beds reserved, requesting medicine supplies`,
         { 
           agent: 'Hospital', 
           type: 'OUTBREAK_PREP', 
-          hospitalId: this.id, 
+          entityId: this.id, 
           disease,
           riskLevel: event.riskLevel
         }
       );
 
+      // Get pharmacies in this zone
+      const zonePharmacies = Object.entries(this.worldState.pharmacies)
+        .filter(([_, p]) => p.zone === h.zone)
+        .map(([id, p]) => p.name || id);
+
       // Request medicines from pharmacy
       publish('MEDICINE_REQUEST', {
         hospitalId: this.id,
+        hospitalName: h.name,
         zone: h.zone,
         disease,
         urgency: event.riskLevel === 'critical' ? 'high' : 'medium',
         estimatedPatients: event.predictedCases || 50
       });
+
+      // Log coordination message
+      this.log(
+        `📡 ${h.name}: Sending ${disease} medicine request to ${zonePharmacies.length} pharmacies in ${h.zone} (${zonePharmacies.join(', ')})`,
+        { 
+          agent: 'Hospital', 
+          type: 'COORDINATION', 
+          entityId: this.id, 
+          disease,
+          recipients: zonePharmacies
+        }
+      );
     }
   }
 }

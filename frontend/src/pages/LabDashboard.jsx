@@ -10,6 +10,8 @@ function LabDashboard() {
   const navigate = useNavigate();
   const [labData, setLabData] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [coordinationMessages, setCoordinationMessages] = useState([]);
 
   // Fetch lab data
   useEffect(() => {
@@ -39,6 +41,41 @@ function LabDashboard() {
       // Filter logs relevant to this lab
       if (entry.meta?.agent === 'Lab' && entry.meta?.entityId === labId) {
         setLogs(prev => [...prev, entry].slice(-50));
+        
+        // Convert outbreak detections to alerts
+        if (entry.meta?.type === 'OUTBREAK_DETECTED') {
+          setAlerts(prev => [{
+            id: Date.now(),
+            message: entry.message,
+            type: entry.meta.type,
+            disease: entry.meta.disease,
+            timestamp: entry.timestamp,
+            severity: 'critical'
+          }, ...prev].slice(0, 5));
+        }
+      }
+
+      // Capture scenario triggers
+      if (entry.meta?.agent === 'City' && entry.meta?.type === 'SCENARIO_TRIGGER') {
+        setAlerts(prev => [{
+          id: Date.now(),
+          message: `📊 Scenario activated: Monitoring for ${entry.meta.scenario} pattern changes`,
+          type: 'SCENARIO',
+          timestamp: entry.timestamp,
+          severity: 'info'
+        }, ...prev].slice(0, 5));
+      }
+
+      // Capture coordination messages
+      if (entry.meta?.type === 'COORDINATION' && entry.meta?.agent === 'Lab' && entry.meta?.entityId === labId) {
+        setCoordinationMessages(prev => [{
+          id: Date.now() + Math.random(),
+          message: entry.message,
+          agent: entry.meta?.agent,
+          direction: 'outgoing', // Labs broadcast outgoing messages
+          timestamp: entry.timestamp,
+          recipients: entry.meta?.recipients
+        }, ...prev].slice(0, 8));
       }
     });
 
@@ -236,9 +273,20 @@ function LabDashboard() {
 
                         {/* Alert if high positive rate */}
                         {parseFloat(positiveRate) >= 10 && (
-                          <div className="mt-4 bg-red-900/30 border border-red-700 rounded p-3">
-                            <p className="text-xs text-red-300 flex items-center gap-2">
-                              ⚠️ High positive rate detected. AI Agent broadcasting outbreak alert to hospitals.
+                          <div className="mt-4 bg-red-900/30 border border-red-700 rounded p-3 animate-pulse">
+                            <p className="text-xs text-red-300 flex items-center gap-2 font-bold">
+                              🚨 HIGH POSITIVE RATE DETECTED!
+                            </p>
+                            <p className="text-xs text-yellow-300 mt-2">
+                              💡 AI Agent Action: Broadcasting outbreak alert to hospitals & pharmacies in {data.zone || 'this zone'}
+                            </p>
+                          </div>
+                        )}
+
+                        {parseFloat(positiveRate) >= 5 && parseFloat(positiveRate) < 10 && (
+                          <div className="mt-4 bg-yellow-900/30 border border-yellow-700 rounded p-3">
+                            <p className="text-xs text-yellow-300">
+                              ⚠️ Elevated positive rate - Monitoring closely for outbreak patterns
                             </p>
                           </div>
                         )}
@@ -316,6 +364,70 @@ function LabDashboard() {
 
           {/* Right Column - Info & Logs */}
           <div className="space-y-6">
+            {/* Outbreak Alerts */}
+            {alerts.length > 0 && (
+              <div className="bg-red-900/20 border-2 border-red-600 rounded-lg p-4 animate-pulse">
+                <h2 className="text-lg font-bold mb-3 flex items-center gap-2 text-red-300">
+                  🚨 Outbreak Alerts
+                </h2>
+                <div className="space-y-2">
+                  {alerts.map(alert => (
+                    <div
+                      key={alert.id}
+                      className="bg-slate-800/50 border-l-4 border-red-500 rounded p-3"
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-xs font-bold text-red-400 uppercase">
+                          {alert.disease || alert.type?.replace(/_/g, ' ')}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {new Date(alert.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-200">{alert.message}</p>
+                      <div className="mt-2 pt-2 border-t border-slate-700">
+                        <p className="text-xs text-yellow-300">
+                          💡 AI Action: Hospitals and pharmacies have been alerted
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Inter-Agent Coordination */}
+            {coordinationMessages.length > 0 && (
+              <div className="bg-gradient-to-br from-green-900/30 to-teal-900/20 border-2 border-green-500 rounded-lg p-4">
+                <h2 className="text-lg font-bold mb-3 flex items-center gap-2 text-green-300">
+                  📡 Broadcast Messages
+                </h2>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {coordinationMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className="bg-green-900/40 border-l-4 border-green-400 rounded p-3 text-xs"
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="text-[10px] font-bold">📤 SENT</span>
+                        <div className="flex-1">
+                          <p className="text-slate-200">{msg.message}</p>
+                          {msg.recipients && (
+                            <p className="text-[9px] text-green-300 mt-1">
+                              Recipients: {msg.recipients.hospitals?.length || 0} hospitals, {msg.recipients.pharmacies?.length || 0} pharmacies
+                            </p>
+                          )}
+                          <p className="text-[9px] text-slate-400 mt-1">
+                            {new Date(msg.timestamp).toLocaleTimeString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Lab Info */}
             <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
               <h2 className="text-xl font-bold mb-4">ℹ️ Lab Information</h2>

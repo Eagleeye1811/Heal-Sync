@@ -14,13 +14,43 @@ class SupplierAgent {
   }
 
   start() {
-    // Periodic inventory check every 30 seconds
-    setInterval(() => this.tick(), 30000);
+    // Log initialization
+    const s = this.worldState.suppliers[this.id];
+    const itemCount = Object.keys(s.inventory || {}).length;
+    const vehicleCount = Object.keys(s.fleet || {}).length;
+    this.log(
+      `✅ Supplier Agent ${this.id} (${s.name}) initialized - ${itemCount} items in warehouse | ${vehicleCount} vehicles`,
+      { agent: 'Supplier', type: 'INIT', entityId: this.id }
+    );
+
+    // Periodic inventory check every 15 seconds (faster for demo)
+    setInterval(() => this.tick(), 15000);
   }
 
   tick() {
     const s = this.worldState.suppliers[this.id];
     if (!s) return;
+
+    // Count low inventory items
+    const lowStockItems = Object.entries(s.inventory).filter(([_, item]) => {
+      const stock = item.stock || item;
+      return typeof stock === 'number' && stock < 100;
+    }).length;
+
+    // Count active orders
+    const activeOrders = s.activeOrders?.length || 0;
+    
+    // Count available vehicles
+    const availableVehicles = s.fleet ? 
+      Object.values(s.fleet).filter(v => v.status === 'available').length : 0;
+    const totalVehicles = s.fleet ? Object.keys(s.fleet).length : 0;
+
+    // ALWAYS log current status
+    const status = activeOrders > 2 ? '🟡 BUSY' : '🟢 READY';
+    this.log(
+      `${s.name}: ${status} | ${activeOrders} active orders | ${lowStockItems} low stock alerts | ${availableVehicles}/${totalVehicles} vehicles ready`,
+      { agent: 'Supplier', type: 'STATUS', entityId: this.id, activeOrders, lowStockItems }
+    );
 
     // Check for low inventory levels
     this.checkInventoryLevels(s);
@@ -92,7 +122,8 @@ class SupplierAgent {
     const { 
       medicine, 
       zone, 
-      pharmacyId, 
+      pharmacyId,
+      pharmacyName,
       stock, 
       orderQuantity, 
       urgency, 
@@ -103,11 +134,16 @@ class SupplierAgent {
     // Check if we're the designated supplier for this pharmacy
     if (supplier && supplier !== this.id) return;
 
+    this.log(
+      `📥 ${s.name}: ${urgency?.toUpperCase() || 'NORMAL'} PRIORITY order received from ${pharmacyName || 'Pharmacy'} - ${medicine} (${orderQuantity} units needed)`,
+      { agent: 'Supplier', type: 'ORDER_RECEIVED', entityId: this.id, pharmacyId, medicine, zone, urgency }
+    );
+
     const itemData = s.inventory[medicine];
     if (!itemData) {
       this.log(
-        `[Supplier ${this.id}] Medicine ${medicine} not in our inventory`,
-        { agent: 'Supplier', type: 'NOT_AVAILABLE', pharmacyId, medicine, zone }
+        `❌ ${s.name}: Cannot fulfill order - ${medicine} not in our inventory catalog`,
+        { agent: 'Supplier', type: 'NOT_AVAILABLE', entityId: this.id, pharmacyId, medicine, zone }
       );
       return;
     }
@@ -115,12 +151,13 @@ class SupplierAgent {
     const available = itemData.stock || itemData;
     if (available <= 0) {
       this.log(
-        `[Supplier ${this.id}] Cannot supply ${medicine} to Pharmacy ${pharmacyId} in ${zone} (no stock left)`,
-        { agent: 'Supplier', type: 'NO_SUPPLY', pharmacyId, medicine, zone }
+        `❌ ${s.name}: Cannot supply ${medicine} to ${pharmacyName || 'Pharmacy'} - OUT OF STOCK`,
+        { agent: 'Supplier', type: 'NO_SUPPLY', entityId: this.id, pharmacyId, medicine, zone }
       );
       
       publish('SUPPLY_UNAVAILABLE', {
         supplierId: this.id,
+        supplierName: s.name,
         pharmacyId,
         medicine,
         zone
@@ -142,17 +179,33 @@ class SupplierAgent {
     // Calculate ETA based on delivery fleet
     const eta = this.calculateDeliveryETA(s, zone);
 
+    const remainingStock = itemData.stock || s.inventory[medicine];
     this.log(
-      `[Supplier ${this.id}] ${urgency?.toUpperCase() || 'NORMAL'} order: Supplying ${quantity} units of ${medicine} to Pharmacy ${pharmacyId} in ${zone}. ETA: ${eta} hours. Remaining: ${itemData.stock || s.inventory[medicine]}`,
+      `✅ ${s.name}: Order CONFIRMED - Dispatching ${quantity} units of ${medicine} to ${zone} | ETA: ${eta}h | Warehouse remaining: ${remainingStock} units`,
       { 
         agent: 'Supplier', 
         type: 'SUPPLY_CONFIRMED', 
+        entityId: this.id,
         pharmacyId, 
         medicine, 
         quantity, 
         zone,
         urgency,
         eta
+      }
+    );
+
+    // Log coordination message
+    this.log(
+      `📡 ${s.name}: Confirming delivery to ${pharmacyName || 'pharmacy'} - ${quantity} units of ${medicine} dispatched to ${zone}`,
+      { 
+        agent: 'Supplier', 
+        type: 'COORDINATION', 
+        entityId: this.id,
+        recipient: pharmacyName || pharmacyId,
+        medicine,
+        quantity,
+        zone
       }
     );
 

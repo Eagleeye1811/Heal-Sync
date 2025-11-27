@@ -10,6 +10,8 @@ function SupplierDashboard() {
   const navigate = useNavigate();
   const [supplierData, setSupplierData] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [coordinationMessages, setCoordinationMessages] = useState([]);
 
   // Fetch supplier data
   useEffect(() => {
@@ -39,6 +41,45 @@ function SupplierDashboard() {
       // Filter logs relevant to this supplier
       if (entry.meta?.agent === 'Supplier' && entry.meta?.entityId === supplierId) {
         setLogs(prev => [...prev, entry].slice(-50));
+        
+        // Convert important logs to alerts
+        const alertTypes = ['ORDER_RECEIVED', 'SUPPLY_CONFIRMED', 'NO_SUPPLY'];
+        if (entry.meta?.type && alertTypes.includes(entry.meta.type)) {
+          setAlerts(prev => [{
+            id: Date.now(),
+            message: entry.message,
+            type: entry.meta.type,
+            timestamp: entry.timestamp,
+            severity: entry.meta.urgency === 'high' ? 'high' : 'medium'
+          }, ...prev].slice(0, 5));
+        }
+      }
+
+      // Capture medicine shortage requests from pharmacies
+      if (entry.meta?.agent === 'Pharmacy' && entry.meta?.type === 'ORDER_PLACED') {
+        setAlerts(prev => [{
+          id: Date.now(),
+          message: `📥 New order incoming from pharmacy`,
+          type: 'INCOMING_ORDER',
+          timestamp: entry.timestamp,
+          severity: 'info'
+        }, ...prev].slice(0, 5));
+      }
+
+      // Capture coordination messages
+      if (entry.meta?.type === 'COORDINATION') {
+        const isOutgoing = entry.meta?.agent === 'Supplier' && entry.meta?.entityId === supplierId;
+        const isIncoming = entry.meta?.agent === 'Pharmacy' && entry.message.includes('Sent order request');
+        
+        if (isOutgoing || isIncoming) {
+          setCoordinationMessages(prev => [{
+            id: Date.now() + Math.random(),
+            message: entry.message,
+            agent: entry.meta?.agent,
+            direction: isOutgoing ? 'outgoing' : 'incoming',
+            timestamp: entry.timestamp
+          }, ...prev].slice(0, 8));
+        }
       }
     });
 
@@ -231,9 +272,20 @@ function SupplierDashboard() {
                         </div>
 
                         {capacityPercent < 20 && (
-                          <div className="mt-3 bg-red-900/30 border border-red-700 rounded p-2">
-                            <p className="text-xs text-red-300">
-                              ⚠️ Low stock - Restock recommended
+                          <div className="mt-3 bg-red-900/30 border border-red-700 rounded p-2 animate-pulse">
+                            <p className="text-xs text-red-300 font-bold">
+                              🚨 CRITICAL: Low warehouse stock!
+                            </p>
+                            <p className="text-xs text-yellow-300 mt-1">
+                              💡 Action: Contact procurement team for restocking
+                            </p>
+                          </div>
+                        )}
+
+                        {capacityPercent >= 20 && capacityPercent < 40 && (
+                          <div className="mt-3 bg-yellow-900/30 border border-yellow-700 rounded p-2">
+                            <p className="text-xs text-yellow-300">
+                              ⚠️ Stock level moderate - Monitor for high demand items
                             </p>
                           </div>
                         )}
@@ -312,6 +364,66 @@ function SupplierDashboard() {
 
           {/* Right Column - Fleet & Info */}
           <div className="space-y-6">
+            {/* Order Alerts */}
+            {alerts.length > 0 && (
+              <div className="bg-blue-900/20 border-2 border-blue-600 rounded-lg p-4">
+                <h2 className="text-lg font-bold mb-3 flex items-center gap-2 text-blue-300">
+                  📋 Recent Orders & Actions
+                </h2>
+                <div className="space-y-2">
+                  {alerts.map(alert => (
+                    <div
+                      key={alert.id}
+                      className="bg-slate-800/50 border-l-4 border-blue-500 rounded p-3"
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-xs font-bold text-blue-400">
+                          {alert.type?.replace(/_/g, ' ')}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {new Date(alert.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-200">{alert.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Inter-Agent Coordination */}
+            {coordinationMessages.length > 0 && (
+              <div className="bg-gradient-to-br from-orange-900/30 to-yellow-900/20 border-2 border-orange-500 rounded-lg p-4">
+                <h2 className="text-lg font-bold mb-3 flex items-center gap-2 text-orange-300">
+                  📡 Order Communication
+                </h2>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {coordinationMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`rounded p-3 text-xs border-l-4 ${
+                        msg.direction === 'outgoing'
+                          ? 'bg-orange-900/40 border-orange-400'
+                          : 'bg-green-900/40 border-green-400'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="text-[10px] font-bold">
+                          {msg.direction === 'outgoing' ? '📤 SENT' : '📥 RECEIVED'}
+                        </span>
+                        <div className="flex-1">
+                          <p className="text-slate-200">{msg.message}</p>
+                          <p className="text-[9px] text-slate-400 mt-1">
+                            {new Date(msg.timestamp).toLocaleTimeString()} • from {msg.agent} Agent
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Supplier Info */}
             <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
               <h2 className="text-xl font-bold mb-4">ℹ️ Supplier Info</h2>

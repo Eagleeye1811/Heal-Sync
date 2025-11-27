@@ -10,6 +10,13 @@ class LabAgent {
   }
 
   start() {
+    // Log initialization
+    const lab = this.worldState.labs[this.id];
+    this.log(
+      `✅ Lab Agent ${this.id} (${lab.name}) initialized - Testing 5 diseases in ${lab.zone}`,
+      { agent: 'Lab', type: 'INIT', entityId: this.id }
+    );
+
     // Runs every 10 seconds
     setInterval(() => this.tick(), 10000);
   }
@@ -18,9 +25,26 @@ class LabAgent {
     const lab = this.worldState.labs[this.id];
     if (!lab) return;
 
-    // Check all diseases for outbreaks
+    // Calculate total tests and positive rates
     const diseases = ['dengue', 'malaria', 'typhoid', 'influenza', 'covid'];
+    const totalTests = Object.values(lab.testData).reduce((sum, data) => sum + (data.today || 0), 0);
+    const totalPositive = Object.values(lab.testData).reduce((sum, data) => sum + (data.positive || 0), 0);
+    const positiveRate = totalTests > 0 ? ((totalPositive / totalTests) * 100).toFixed(1) : 0;
+
+    // Find diseases with concerning positive rates
+    const concerning = diseases.filter(d => {
+      const data = lab.testData[d];
+      return data && data.today > 0 && (data.positive / data.today) > 0.1; // >10% positive
+    });
+
+    // ALWAYS log current status
+    const concerningText = concerning.length > 0 ? ` | 🔍 Monitoring: ${concerning.join(', ')}` : '';
+    this.log(
+      `${lab.name}: Processing ${totalTests} tests today | Positive rate: ${positiveRate}%${concerningText}`,
+      { agent: 'Lab', type: 'STATUS', entityId: this.id, totalTests, positiveRate }
+    );
     
+    // Check all diseases for outbreaks
     diseases.forEach(disease => {
       this.checkDiseaseOutbreak(lab, disease);
     });
@@ -58,11 +82,21 @@ class LabAgent {
 
     // Alert if significant outbreak detected
     if (avg > 0 && today > 1.5 * avg) {
+      // Get list of hospitals and pharmacies in this zone
+      const zoneHospitals = Object.entries(this.worldState.hospitals)
+        .filter(([_, h]) => h.zone === lab.zone)
+        .map(([id, h]) => h.name || id);
+      
+      const zonePharmacies = Object.entries(this.worldState.pharmacies)
+        .filter(([_, p]) => p.zone === lab.zone)
+        .map(([id, p]) => p.name || id);
+
       this.log(
-        `[Lab ${this.id}] ${disease.toUpperCase()} spike detected in ${lab.zone}: today=${today}, avg=${avg.toFixed(1)}, growth=${(growthRate * 100).toFixed(1)}%`,
+        `🚨 ${lab.name}: ${disease.toUpperCase()} OUTBREAK DETECTED! Tests: ${today} (+${(growthRate * 100).toFixed(0)}% spike) | Positive rate: ${((testData.positive/today) * 100).toFixed(1)}%`,
         { 
           agent: "Lab", 
-          type: `${disease.toUpperCase()}_ALERT`, 
+          type: `OUTBREAK_DETECTED`, 
+          entityId: this.id,
           zone: lab.zone,
           disease,
           riskLevel,
@@ -70,9 +104,26 @@ class LabAgent {
         }
       );
 
+      // Log coordination message
+      this.log(
+        `📡 ${lab.name}: Broadcasting ${disease.toUpperCase()} alert to ${zoneHospitals.length} hospitals & ${zonePharmacies.length} pharmacies in ${lab.zone}`,
+        { 
+          agent: "Lab", 
+          type: `COORDINATION`, 
+          entityId: this.id,
+          zone: lab.zone,
+          disease,
+          recipients: {
+            hospitals: zoneHospitals,
+            pharmacies: zonePharmacies
+          }
+        }
+      );
+
       // Publish outbreak prediction event
       publish(`${disease.toUpperCase()}_OUTBREAK_PREDICTED`, {
         labId: this.id,
+        labName: lab.name,
         zone: lab.zone,
         disease,
         today,

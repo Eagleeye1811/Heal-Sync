@@ -27,8 +27,8 @@ attachIO(io);
 // ✅ give agents the logger's sendLog function
 setLogSender(sendLog);
 
-// ✅ REST routes (pass worldState + getLogs function)
-app.use('/api', stateRoutes(worldState, getLogs));
+// ✅ REST routes (pass worldState + getLogs function + sendLog for scenario triggers)
+app.use('/api', stateRoutes(worldState, getLogs, sendLog));
 
 // Basic health check
 app.get('/', (req, res) => {

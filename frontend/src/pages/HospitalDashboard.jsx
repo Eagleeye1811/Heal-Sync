@@ -10,6 +10,8 @@ function HospitalDashboard() {
   const navigate = useNavigate();
   const [hospitalData, setHospitalData] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [coordinationMessages, setCoordinationMessages] = useState([]);
 
   // Fetch hospital data
   useEffect(() => {
@@ -39,6 +41,45 @@ function HospitalDashboard() {
       // Filter logs relevant to this hospital
       if (entry.meta?.agent === 'Hospital' && entry.meta?.entityId === hospitalId) {
         setLogs(prev => [...prev, entry].slice(-50));
+        
+        // Convert critical logs to alerts
+        const criticalTypes = ['ALERT_RECEIVED', 'OVERLOAD_RISK', 'BED_ALLOCATION', 'EQUIPMENT_CRITICAL'];
+        if (entry.meta?.type && criticalTypes.includes(entry.meta.type)) {
+          setAlerts(prev => [{
+            id: Date.now(),
+            message: entry.message,
+            type: entry.meta.type,
+            timestamp: entry.timestamp,
+            severity: entry.meta.type === 'OVERLOAD_RISK' || entry.meta.type === 'EQUIPMENT_CRITICAL' ? 'high' : 'medium'
+          }, ...prev].slice(0, 5)); // Keep last 5 alerts
+        }
+      }
+
+      // Also capture outbreak alerts from Lab agents (they affect this hospital)
+      if (entry.meta?.agent === 'Lab' && entry.meta?.type === 'OUTBREAK_DETECTED') {
+        setAlerts(prev => [{
+          id: Date.now(),
+          message: `🚨 ${entry.meta.disease?.toUpperCase()} outbreak detected by lab - Prepare for patient surge`,
+          type: 'OUTBREAK_ALERT',
+          timestamp: entry.timestamp,
+          severity: 'high'
+        }, ...prev].slice(0, 5));
+      }
+
+      // Capture coordination messages (incoming and outgoing)
+      if (entry.meta?.type === 'COORDINATION') {
+        const isOutgoing = entry.meta?.agent === 'Hospital' && entry.meta?.entityId === hospitalId;
+        const isIncoming = entry.meta?.agent === 'Lab' && entry.message.includes('Broadcasting');
+        
+        if (isOutgoing || isIncoming) {
+          setCoordinationMessages(prev => [{
+            id: Date.now() + Math.random(),
+            message: entry.message,
+            agent: entry.meta?.agent,
+            direction: isOutgoing ? 'outgoing' : 'incoming',
+            timestamp: entry.timestamp
+          }, ...prev].slice(0, 8));
+        }
       }
     });
 
@@ -125,9 +166,15 @@ function HospitalDashboard() {
           <div className="lg:col-span-2 space-y-6">
             {/* Bed Capacity Overview */}
             <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                🛏️ Bed Capacity Status
-              </h2>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  🛏️ Bed Capacity Status
+                </h2>
+                <div className="flex items-center gap-2 bg-green-900/30 border border-green-600 rounded px-3 py-1">
+                  <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                  <span className="text-xs text-green-300 font-semibold">Live Updates</span>
+                </div>
+              </div>
               <div className="grid md:grid-cols-2 gap-4">
                 {Object.entries(hospitalData.beds).map(([bedType, bedData]) => {
                   const utilization = getBedUtilization(bedType);
@@ -156,12 +203,28 @@ function HospitalDashboard() {
                       <div className="mb-2">
                         <div className="w-full bg-slate-600 rounded-full h-3">
                           <div
-                            className={`${getUtilizationBg(utilization)} h-3 rounded-full transition-all`}
+                            className={`${getUtilizationBg(utilization)} h-3 rounded-full transition-all duration-500`}
                             style={{ width: `${utilization}%` }}
                           ></div>
                         </div>
                       </div>
                       <p className="text-xs text-slate-400">{utilization}% occupied</p>
+
+                      {/* Dynamic Status Indicators */}
+                      {utilization >= 85 && (
+                        <div className="mt-2 bg-red-900/40 border border-red-600 rounded p-2 animate-pulse">
+                          <p className="text-[10px] text-red-300 font-bold">
+                            🚨 CRITICAL: Near capacity!
+                          </p>
+                        </div>
+                      )}
+                      {utilization >= 70 && utilization < 85 && (
+                        <div className="mt-2 bg-yellow-900/30 border border-yellow-600 rounded p-2">
+                          <p className="text-[10px] text-yellow-300">
+                            ⚠️ High utilization - Monitoring
+                          </p>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -297,6 +360,70 @@ function HospitalDashboard() {
 
           {/* Right Column - Logs & Alerts */}
           <div className="space-y-6">
+            {/* Critical Alerts */}
+            {alerts.length > 0 && (
+              <div className="bg-red-900/20 border-2 border-red-600 rounded-lg p-4">
+                <h2 className="text-lg font-bold mb-3 flex items-center gap-2 text-red-300">
+                  🚨 Critical Alerts
+                </h2>
+                <div className="space-y-2">
+                  {alerts.map(alert => (
+                    <div
+                      key={alert.id}
+                      className={`bg-slate-800/50 border-l-4 ${
+                        alert.severity === 'high' ? 'border-red-500' : 'border-yellow-500'
+                      } rounded p-3`}
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <span className={`text-xs font-bold ${
+                          alert.severity === 'high' ? 'text-red-400' : 'text-yellow-400'
+                        }`}>
+                          {alert.type?.replace(/_/g, ' ')}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {new Date(alert.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-200">{alert.message}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Inter-Agent Coordination */}
+            {coordinationMessages.length > 0 && (
+              <div className="bg-gradient-to-br from-blue-900/30 to-purple-900/20 border-2 border-blue-500 rounded-lg p-4">
+                <h2 className="text-lg font-bold mb-3 flex items-center gap-2 text-blue-300">
+                  📡 Inter-Agent Communication
+                </h2>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {coordinationMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`rounded p-3 text-xs border-l-4 ${
+                        msg.direction === 'outgoing'
+                          ? 'bg-blue-900/40 border-blue-400'
+                          : 'bg-green-900/40 border-green-400'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="text-[10px] font-bold">
+                          {msg.direction === 'outgoing' ? '📤 SENT' : '📥 RECEIVED'}
+                        </span>
+                        <div className="flex-1">
+                          <p className="text-slate-200">{msg.message}</p>
+                          <p className="text-[9px] text-slate-400 mt-1">
+                            {new Date(msg.timestamp).toLocaleTimeString()} • from {msg.agent} Agent
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Staff Overview */}
             <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
               <h2 className="text-xl font-bold mb-4">👥 Staff on Duty</h2>

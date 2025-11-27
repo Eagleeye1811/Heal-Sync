@@ -10,6 +10,8 @@ function PharmacyDashboard() {
   const navigate = useNavigate();
   const [pharmacyData, setPharmacyData] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [alerts, setAlerts] = useState([]);
+  const [coordinationMessages, setCoordinationMessages] = useState([]);
 
   // Fetch pharmacy data
   useEffect(() => {
@@ -39,6 +41,57 @@ function PharmacyDashboard() {
       // Filter logs relevant to this pharmacy
       if (entry.meta?.agent === 'Pharmacy' && entry.meta?.entityId === pharmacyId) {
         setLogs(prev => [...prev, entry].slice(-50));
+        
+        // Convert critical logs to alerts
+        const criticalTypes = ['MED_SHORTAGE', 'ALERT_RECEIVED', 'ORDER_PLACED', 'DEMAND_FORECAST'];
+        if (entry.meta?.type && criticalTypes.includes(entry.meta.type)) {
+          setAlerts(prev => [{
+            id: Date.now(),
+            message: entry.message,
+            type: entry.meta.type,
+            timestamp: entry.timestamp,
+            severity: entry.meta.type === 'MED_SHORTAGE' ? 'high' : 'medium',
+            medicine: entry.meta.medicine
+          }, ...prev].slice(0, 5));
+        }
+      }
+
+      // Capture outbreak alerts from Lab agents
+      if (entry.meta?.agent === 'Lab' && entry.meta?.type === 'OUTBREAK_DETECTED') {
+        setAlerts(prev => [{
+          id: Date.now(),
+          message: `🦠 ${entry.meta.disease?.toUpperCase()} outbreak detected - Stock up on related medicines`,
+          type: 'OUTBREAK_ALERT',
+          timestamp: entry.timestamp,
+          severity: 'high'
+        }, ...prev].slice(0, 5));
+      }
+
+      // Capture supplier confirmations
+      if (entry.meta?.agent === 'Supplier' && entry.meta?.type === 'SUPPLY_CONFIRMED') {
+        setAlerts(prev => [{
+          id: Date.now(),
+          message: `✅ Supplier confirmed order - Delivery incoming`,
+          type: 'SUPPLY_CONFIRMED',
+          timestamp: entry.timestamp,
+          severity: 'low'
+        }, ...prev].slice(0, 5));
+      }
+
+      // Capture coordination messages
+      if (entry.meta?.type === 'COORDINATION') {
+        const isOutgoing = entry.meta?.agent === 'Pharmacy' && entry.meta?.entityId === pharmacyId;
+        const isIncoming = (entry.meta?.agent === 'Lab' || entry.meta?.agent === 'Hospital' || entry.meta?.agent === 'Supplier');
+        
+        if (isOutgoing || isIncoming) {
+          setCoordinationMessages(prev => [{
+            id: Date.now() + Math.random(),
+            message: entry.message,
+            agent: entry.meta?.agent,
+            direction: isOutgoing ? 'outgoing' : 'incoming',
+            timestamp: entry.timestamp
+          }, ...prev].slice(0, 8));
+        }
       }
     });
 
@@ -166,9 +219,15 @@ function PharmacyDashboard() {
             {/* Medicine Inventory by Category */}
             {Object.entries(medicinesByCategory).map(([category, medicines]) => (
               <div key={category} className="bg-slate-800 rounded-lg p-6 border border-slate-700">
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                  💊 {category}
-                </h2>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    💊 {category}
+                  </h2>
+                  <div className="flex items-center gap-2 bg-green-900/30 border border-green-600 rounded px-2 py-1">
+                    <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                    <span className="text-[10px] text-green-300 font-semibold">Live</span>
+                  </div>
+                </div>
                 <div className="space-y-3">
                   {medicines.map(medicine => {
                     const status = getStockStatus(medicine);
@@ -231,9 +290,20 @@ function PharmacyDashboard() {
                         )}
 
                         {medicine.stock < medicine.reorderPoint && (
-                          <div className="mt-3 bg-red-900/30 border border-red-700 rounded p-2">
+                          <div className="mt-3 bg-red-900/30 border border-red-700 rounded p-2 animate-pulse">
                             <p className="text-xs text-red-300 flex items-center gap-2">
-                              ⚠️ Below reorder point - AI Agent will place order automatically
+                              🚨 CRITICAL: Below reorder point
+                            </p>
+                            <p className="text-xs text-yellow-300 mt-1">
+                              💡 AI Agent Action: Contacting supplier agent now
+                            </p>
+                          </div>
+                        )}
+
+                        {medicine.stock >= medicine.reorderPoint && medicine.stock < medicine.reorderPoint * 1.5 && (
+                          <div className="mt-3 bg-yellow-900/30 border border-yellow-700 rounded p-2">
+                            <p className="text-xs text-yellow-300">
+                              ⚠️ Stock approaching reorder point - Monitoring closely
                             </p>
                           </div>
                         )}
@@ -283,6 +353,82 @@ function PharmacyDashboard() {
 
           {/* Right Column - Status & Logs */}
           <div className="space-y-6">
+            {/* Critical Alerts & Actions */}
+            {alerts.length > 0 && (
+              <div className={`border-2 rounded-lg p-4 ${
+                alerts[0].severity === 'high' 
+                  ? 'bg-red-900/20 border-red-600' 
+                  : alerts[0].severity === 'medium'
+                  ? 'bg-yellow-900/20 border-yellow-600'
+                  : 'bg-blue-900/20 border-blue-600'
+              }`}>
+                <h2 className="text-lg font-bold mb-3 flex items-center gap-2">
+                  {alerts[0].severity === 'high' ? '🚨' : alerts[0].severity === 'medium' ? '⚠️' : 'ℹ️'} 
+                  Recent Actions & Alerts
+                </h2>
+                <div className="space-y-2">
+                  {alerts.map(alert => (
+                    <div
+                      key={alert.id}
+                      className="bg-slate-800/50 border-l-4 border-blue-500 rounded p-3"
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <span className="text-xs font-bold text-blue-400">
+                          {alert.type?.replace(/_/g, ' ')}
+                        </span>
+                        <span className="text-[10px] text-slate-500">
+                          {new Date(alert.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-200">{alert.message}</p>
+                      
+                      {/* Actionable suggestions */}
+                      {alert.type === 'MED_SHORTAGE' && alert.medicine && (
+                        <div className="mt-2 pt-2 border-t border-slate-700">
+                          <p className="text-xs text-yellow-300">
+                            💡 AI Agent Action: Automatically placing order with supplier
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Inter-Agent Coordination */}
+            {coordinationMessages.length > 0 && (
+              <div className="bg-gradient-to-br from-purple-900/30 to-pink-900/20 border-2 border-purple-500 rounded-lg p-4">
+                <h2 className="text-lg font-bold mb-3 flex items-center gap-2 text-purple-300">
+                  📡 Inter-Agent Communication
+                </h2>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {coordinationMessages.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className={`rounded p-3 text-xs border-l-4 ${
+                        msg.direction === 'outgoing'
+                          ? 'bg-purple-900/40 border-purple-400'
+                          : 'bg-green-900/40 border-green-400'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className="text-[10px] font-bold">
+                          {msg.direction === 'outgoing' ? '📤 SENT' : '📥 RECEIVED'}
+                        </span>
+                        <div className="flex-1">
+                          <p className="text-slate-200">{msg.message}</p>
+                          <p className="text-[9px] text-slate-400 mt-1">
+                            {new Date(msg.timestamp).toLocaleTimeString()} • from {msg.agent} Agent
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Pharmacy Info */}
             <div className="bg-slate-800 rounded-lg p-6 border border-slate-700">
               <h2 className="text-xl font-bold mb-4">ℹ️ Pharmacy Info</h2>

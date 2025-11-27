@@ -21,8 +21,14 @@ class CityAgent {
   }
 
   start() {
-    // Periodic city health summary every 20 seconds
-    setInterval(() => this.tick(), 20000);
+    // Log initialization
+    this.log(
+      `✅ City Agent initialized - Coordinating citywide healthcare across 3 zones with 12 facilities`,
+      { agent: 'City', type: 'INIT', entityId: 'CITY' }
+    );
+
+    // Periodic city health summary every 15 seconds (faster for demo)
+    setInterval(() => this.tick(), 15000);
   }
 
   tick() {
@@ -31,24 +37,36 @@ class CityAgent {
     // Update citywide metrics
     this.updateCityMetrics();
     
+    // Calculate key citywide metrics for logging
+    const totalActiveCases = city.diseaseStats ? 
+      Object.values(city.diseaseStats).reduce((sum, d) => sum + (d.activeCases || 0), 0) : 0;
+    const bedsAvailable = city.totalResources?.beds?.available || 0;
+    const bedsTotal = city.totalResources?.beds?.total || 0;
+    const bedUtilization = Math.round(((bedsTotal - bedsAvailable) / bedsTotal) * 100);
+    
     // Assess overall risk status
     const riskAssessment = this.assessCityRisk();
+    const highRiskZones = riskAssessment.highRiskZones;
     
-    if (riskAssessment.highRiskZones.length > 0) {
+    // ALWAYS log comprehensive city status
+    if (highRiskZones.length > 0) {
       this.log(
-        `[CityAgent] ${riskAssessment.highRiskZones.length} high-risk zone(s): ${riskAssessment.highRiskZones.join(', ')}. Overall risk: ${riskAssessment.overallRisk.toUpperCase()}`,
+        `🏙️ City Health Status: 🔴 ${highRiskZones.length} HIGH-RISK zones (${highRiskZones.join(', ')}) | ${totalActiveCases} active cases | ${bedsAvailable}/${bedsTotal} beds (${bedUtilization}% used) | ${city.activeAlerts.length} alerts`,
         { 
           agent: 'City', 
-          type: 'CITY_SUMMARY', 
-          highRiskZones: riskAssessment.highRiskZones,
+          type: 'STATUS', 
+          entityId: 'CITY',
+          highRiskZones,
           overallRisk: riskAssessment.overallRisk,
-          activeAlerts: city.activeAlerts.length
+          activeAlerts: city.activeAlerts.length,
+          totalCases: totalActiveCases,
+          bedUtilization
         }
       );
     } else {
       this.log(
-        `[CityAgent] City status: All zones at low/medium risk. Active alerts: ${city.activeAlerts.length}`,
-        { agent: 'City', type: 'CITY_SUMMARY', overallRisk: 'low' }
+        `🏙️ City Health Status: 🟢 All zones STABLE | ${totalActiveCases} active cases | ${bedsAvailable}/${bedsTotal} beds available | ${city.activeAlerts.length} alerts`,
+        { agent: 'City', type: 'STATUS', entityId: 'CITY', overallRisk: 'low', totalCases: totalActiveCases }
       );
     }
   }

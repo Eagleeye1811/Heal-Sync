@@ -20,6 +20,14 @@ class PharmacyAgent {
   }
 
   start() {
+    // Log initialization
+    const p = this.worldState.pharmacies[this.id];
+    const medicineCount = Object.keys(p.medicines || {}).length;
+    this.log(
+      `✅ Pharmacy Agent ${this.id} (${p.name}) initialized - Managing ${medicineCount} medicines in ${p.zone}`,
+      { agent: 'Pharmacy', type: 'INIT', entityId: this.id }
+    );
+
     // Runs every 12 seconds
     setInterval(() => this.tick(), 12000);
   }
@@ -28,9 +36,40 @@ class PharmacyAgent {
     const p = this.worldState.pharmacies[this.id];
     if (!p) return;
 
+    // Simulate daily medicine consumption
+    this.consumeMedicines(p);
+
+    // Count low stock items
+    const lowStockItems = Object.entries(p.medicines).filter(([_, med]) => 
+      med.stock <= med.reorderPoint
+    ).length;
+
+    // Count pending orders
+    const pendingOrders = p.pendingOrders?.length || 0;
+
+    // ALWAYS log current status
+    const status = lowStockItems > 0 ? '🟡 MONITORING' : '🟢 NORMAL';
+    this.log(
+      `${p.name}: ${status} stock levels | ${lowStockItems} items need restock | ${pendingOrders} pending orders`,
+      { agent: 'Pharmacy', type: 'STATUS', entityId: this.id, lowStockItems, pendingOrders }
+    );
+
     // Check all medicines for shortage risk
     Object.keys(p.medicines).forEach((medicineName) => {
       this.checkMedicineStock(p, medicineName);
+    });
+  }
+
+  consumeMedicines(pharmacy) {
+    // Simulate medicine usage over time (for demo purposes)
+    Object.entries(pharmacy.medicines).forEach(([medName, medicine]) => {
+      if (medicine.usagePerDay && medicine.usagePerDay > 0) {
+        // Consume a small amount each tick (every 12 seconds = 0.2% of daily usage)
+        const consumptionAmount = Math.ceil(medicine.usagePerDay * 0.002);
+        if (medicine.stock > 0) {
+          medicine.stock = Math.max(0, medicine.stock - consumptionAmount);
+        }
+      }
     });
   }
 
@@ -48,11 +87,11 @@ class PharmacyAgent {
       const urgency = daysLeft < 2 ? 'high' : daysLeft < 5 ? 'medium' : 'low';
       
       this.log(
-        `[Pharmacy ${this.id}] ${urgency.toUpperCase()} shortage risk for ${medicineName}: ${stock} units left (~${daysLeft.toFixed(1)} days)`,
+        `⚠️ ${pharmacy.name}: ${urgency.toUpperCase()} shortage alert for ${medicineName}! Stock: ${stock} units (~${daysLeft.toFixed(1)} days remaining)`,
         { 
           agent: 'Pharmacy', 
           type: 'MED_SHORTAGE', 
-          pharmacyId: this.id, 
+          entityId: this.id, 
           medicine: medicineName,
           urgency,
           criticality: medicine.criticality
@@ -61,19 +100,6 @@ class PharmacyAgent {
 
       // Calculate optimal order quantity
       const orderQuantity = this.calculateOrderQuantity(medicine, daysLeft);
-
-      publish('MEDICINE_SHORTAGE_RISK', {
-        pharmacyId: this.id,
-        medicine: medicineName,
-        stock,
-        daysLeft: daysLeft.toFixed(1),
-        reorderPoint,
-        urgency,
-        criticality: medicine.criticality,
-        zone: pharmacy.zone,
-        orderQuantity,
-        supplier: medicine.supplier
-      });
 
       // Add to pending orders
       if (!pharmacy.pendingOrders.some(o => o.medicine === medicineName)) {
@@ -85,7 +111,47 @@ class PharmacyAgent {
           timestamp: new Date().toISOString(),
           status: 'requested'
         });
+
+        this.log(
+          `📤 ${pharmacy.name}: Placing ${urgency} priority order with ${medicine.supplier} - Ordering ${orderQuantity} units of ${medicineName}`,
+          { 
+            agent: 'Pharmacy', 
+            type: 'ORDER_PLACED', 
+            entityId: this.id, 
+            medicine: medicineName,
+            quantity: orderQuantity,
+            supplier: medicine.supplier,
+            urgency
+          }
+        );
+
+        // Log coordination message
+        this.log(
+          `📡 ${pharmacy.name}: Sent order request to ${medicine.supplier} for ${medicineName} (${orderQuantity} units)`,
+          { 
+            agent: 'Pharmacy', 
+            type: 'COORDINATION', 
+            entityId: this.id, 
+            medicine: medicineName,
+            quantity: orderQuantity,
+            recipient: medicine.supplier
+          }
+        );
       }
+
+      publish('MEDICINE_SHORTAGE_RISK', {
+        pharmacyId: this.id,
+        pharmacyName: pharmacy.name,
+        medicine: medicineName,
+        stock,
+        daysLeft: daysLeft.toFixed(1),
+        reorderPoint,
+        urgency,
+        criticality: medicine.criticality,
+        zone: pharmacy.zone,
+        orderQuantity,
+        supplier: medicine.supplier
+      });
     }
   }
 
@@ -106,6 +172,17 @@ class PharmacyAgent {
     // Only respond if outbreak is in our zone
     if (p.zone !== event.zone) return;
 
+    this.log(
+      `💊 ${p.name}: ${disease.toUpperCase()} OUTBREAK ALERT received from labs! Preparing medicine supplies`,
+      { 
+        agent: 'Pharmacy', 
+        type: 'ALERT_RECEIVED', 
+        entityId: this.id,
+        disease,
+        zone: event.zone
+      }
+    );
+
     // Increase usage estimate for relevant medicines
     const medicine = p.medicines[primaryMedicine];
     if (medicine) {
@@ -115,13 +192,15 @@ class PharmacyAgent {
       
       const oldUsage = medicine.dailyUsage;
       medicine.dailyUsage = Math.round(oldUsage * multiplier);
+      const currentStock = medicine.stock;
+      const daysRemaining = currentStock / medicine.dailyUsage;
 
       this.log(
-        `[Pharmacy ${this.id}] ${disease.toUpperCase()} outbreak alert - Increasing ${primaryMedicine} usage estimate from ${oldUsage} to ${medicine.dailyUsage} per day`,
+        `📊 ${p.name}: Adjusting ${primaryMedicine} demand forecast - Usage: ${oldUsage} → ${medicine.dailyUsage}/day | Stock: ${currentStock} units (${daysRemaining.toFixed(1)} days supply)`,
         { 
           agent: 'Pharmacy', 
-          type: 'OUTBREAK_PREP', 
-          pharmacyId: this.id,
+          type: 'DEMAND_FORECAST', 
+          entityId: this.id,
           disease,
           medicine: primaryMedicine,
           multiplier
@@ -161,8 +240,8 @@ class PharmacyAgent {
     if (p.zone !== event.zone) return;
 
     this.log(
-      `[Pharmacy ${this.id}] Received medicine request from Hospital ${event.hospitalId} for ${event.disease} outbreak`,
-      { agent: 'Pharmacy', type: 'REQUEST_RECEIVED', pharmacyId: this.id, hospitalId: event.hospitalId }
+      `📩 ${p.name}: Medicine request received from ${event.hospitalName || 'Hospital'} for ${event.disease} outbreak (${event.urgency} priority)`,
+      { agent: 'Pharmacy', type: 'REQUEST_RECEIVED', entityId: this.id, hospitalId: event.hospitalId, urgency: event.urgency }
     );
 
     // Proactively check stock for outbreak-related medicines
@@ -170,6 +249,14 @@ class PharmacyAgent {
     const primaryMedicine = this.getPrimaryMedicineForDisease(disease);
     
     if (primaryMedicine && p.medicines[primaryMedicine]) {
+      const medicine = p.medicines[primaryMedicine];
+      const stockStatus = medicine.stock > medicine.reorderPoint ? 'sufficient' : 'low';
+      
+      this.log(
+        `📦 ${p.name}: Checking ${primaryMedicine} inventory - Stock: ${medicine.stock} units (Status: ${stockStatus})`,
+        { agent: 'Pharmacy', type: 'STOCK_CHECK', entityId: this.id, medicine: primaryMedicine, stock: medicine.stock }
+      );
+      
       this.checkMedicineStock(p, primaryMedicine);
     }
   }

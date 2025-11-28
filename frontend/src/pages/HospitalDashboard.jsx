@@ -101,7 +101,7 @@ function HospitalDashboard() {
 
   const getBedUtilization = (bedType) => {
     const bed = hospitalData.beds[bedType];
-    return Math.round((bed.occupied / bed.total) * 100);
+    return Math.round((bed.used / bed.total) * 100);
   };
 
   const getUtilizationColor = (percent) => {
@@ -178,7 +178,7 @@ function HospitalDashboard() {
               <div className="grid md:grid-cols-2 gap-4">
                 {Object.entries(hospitalData.beds).map(([bedType, bedData]) => {
                   const utilization = getBedUtilization(bedType);
-                  const available = bedData.total - bedData.occupied;
+                  const available = bedData.total - bedData.used;
                   
                   return (
                     <div
@@ -241,13 +241,13 @@ function HospitalDashboard() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-green-400">
-                      {Object.values(hospitalData.beds).reduce((sum, b) => sum + (b.total - b.occupied), 0)}
+                      {Object.values(hospitalData.beds).reduce((sum, b) => sum + (b.total - b.used), 0)}
                     </p>
                     <p className="text-xs text-slate-400">Available</p>
                   </div>
                   <div>
                     <p className="text-2xl font-bold text-red-400">
-                      {Object.values(hospitalData.beds).reduce((sum, b) => sum + b.occupied, 0)}
+                      {Object.values(hospitalData.beds).reduce((sum, b) => sum + b.used, 0)}
                     </p>
                     <p className="text-xs text-slate-400">Occupied</p>
                   </div>
@@ -481,7 +481,7 @@ function HospitalDashboard() {
                     getBedUtilization('general') >= 85 ? 'text-red-400' : 'text-green-400'
                   }`}>
                     {Math.round(
-                      (Object.values(hospitalData.beds).reduce((sum, b) => sum + b.occupied, 0) /
+                      (Object.values(hospitalData.beds).reduce((sum, b) => sum + b.used, 0) /
                        Object.values(hospitalData.beds).reduce((sum, b) => sum + b.total, 0)) * 100
                     )}%
                   </span>

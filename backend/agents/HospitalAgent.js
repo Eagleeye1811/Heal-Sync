@@ -32,6 +32,12 @@ class HospitalAgent {
     const h = this.worldState.hospitals[this.id];
     if (!h) return;
 
+    // DYNAMIC SIMULATION: Simulate patient flow naturally
+    this.simulatePatientFlow(h);
+    
+    // DYNAMIC SIMULATION: Simulate equipment usage and degradation
+    this.simulateEquipmentUsage(h);
+
     // Calculate total bed usage across all bed types
     const totalBeds = this.getTotalBeds(h);
     const usedBeds = this.getUsedBeds(h);
@@ -72,6 +78,120 @@ class HospitalAgent {
     
     // Check ICU capacity specifically
     this.checkICUCapacity(h);
+  }
+
+  simulatePatientFlow(hospital) {
+    // Simulate realistic patient arrivals and discharges
+    const baseArrivalRate = hospital.patientMetrics.inflowPerHour;
+    
+    // Random variation: 60-140% of base rate
+    const randomFactor = 0.6 + (Math.random() * 0.8);
+    const tickDuration = 8; // seconds
+    const arrivalsThisTick = Math.floor((baseArrivalRate / 450) * tickDuration * randomFactor);
+    
+    // Patient arrivals: Distribute across bed types with realistic probabilities
+    if (arrivalsThisTick > 0) {
+      const probabilities = {
+        general: 0.5,    // 50% general ward
+        icu: 0.1,        // 10% ICU
+        isolation: 0.15, // 15% isolation
+        pediatric: 0.15, // 15% pediatric
+        maternity: 0.1   // 10% maternity
+      };
+      
+      for (let i = 0; i < arrivalsThisTick; i++) {
+        const rand = Math.random();
+        let cumulative = 0;
+        
+        for (const [bedType, prob] of Object.entries(probabilities)) {
+          cumulative += prob;
+          if (rand <= cumulative && hospital.beds[bedType]) {
+            if (hospital.beds[bedType].used < hospital.beds[bedType].total) {
+              hospital.beds[bedType].used++;
+              hospital.patientMetrics.admissionsToday++;
+              break;
+            }
+          }
+        }
+      }
+    }
+    
+    // Patient discharges: 3-5% chance per tick for each bed type
+    const dischargeRate = 0.03 + (Math.random() * 0.02); // 3-5%
+    
+    Object.keys(hospital.beds).forEach(bedType => {
+      const beds = hospital.beds[bedType];
+      if (beds.used > 0) {
+        const discharges = Math.floor(beds.used * dischargeRate);
+        if (discharges > 0) {
+          beds.used = Math.max(0, beds.used - discharges);
+        }
+      }
+    });
+    
+    // Update ER wait time based on occupancy
+    const totalBeds = this.getTotalBeds(hospital);
+    const usedBeds = this.getUsedBeds(hospital);
+    const occupancy = usedBeds / totalBeds;
+    
+    // Wait time increases with occupancy
+    const baseWait = 10; // minutes
+    hospital.patientMetrics.erWaitingTime = Math.floor(baseWait + (occupancy * 50));
+  }
+
+  simulateEquipmentUsage(hospital) {
+    // Simulate equipment degradation and usage
+    const equipment = hospital.equipment;
+    
+    // Ventilators: Small chance of needing maintenance
+    if (Math.random() < 0.01 && equipment.ventilators.available > 0) {
+      equipment.ventilators.available--;
+      equipment.ventilators.maintenance++;
+      this.log(
+        `🔧 ${hospital.name}: Ventilator requires maintenance - Available: ${equipment.ventilators.available}/${equipment.ventilators.total}`,
+        { agent: 'Hospital', type: 'EQUIPMENT_MAINTENANCE', entityId: this.id, equipment: 'ventilator' }
+      );
+    }
+    
+    // Occasionally fix equipment in maintenance (5% chance)
+    if (Math.random() < 0.05 && equipment.ventilators.maintenance > 0) {
+      equipment.ventilators.maintenance--;
+      equipment.ventilators.available++;
+    }
+    
+    // Oxygen cylinders: Consumption and replenishment
+    const oxygenConsumption = Math.floor(Math.random() * 3); // 0-2 cylinders per tick
+    if (equipment.oxygenCylinders.available > oxygenConsumption) {
+      equipment.oxygenCylinders.available -= oxygenConsumption;
+      equipment.oxygenCylinders.inUse += oxygenConsumption;
+    }
+    
+    // Refill oxygen (10% chance to replenish some)
+    if (Math.random() < 0.1) {
+      const refillAmount = Math.min(5, equipment.oxygenCylinders.empty);
+      equipment.oxygenCylinders.available += refillAmount;
+      equipment.oxygenCylinders.empty = Math.max(0, equipment.oxygenCylinders.empty - refillAmount);
+    }
+    
+    // Some cylinders become empty (from inUse)
+    if (equipment.oxygenCylinders.inUse > 0 && Math.random() < 0.15) {
+      const emptyAmount = Math.min(2, equipment.oxygenCylinders.inUse);
+      equipment.oxygenCylinders.inUse -= emptyAmount;
+      equipment.oxygenCylinders.empty += emptyAmount;
+    }
+    
+    // Ambulances: Dynamic availability
+    if (Math.random() < 0.1 && equipment.ambulances.available > 0) {
+      // Ambulance dispatched
+      equipment.ambulances.available--;
+      equipment.ambulances.onRoute++;
+    }
+    
+    if (Math.random() < 0.15 && equipment.ambulances.onRoute > 0) {
+      // Ambulance returns
+      equipment.ambulances.onRoute--;
+      equipment.ambulances.available++;
+    }
   }
 
   getTotalBeds(hospital) {
@@ -143,28 +263,28 @@ class HospitalAgent {
         
         // Reserve isolation beds AND actually occupy some to simulate preparation
         const isolationBeds = h.beds.isolation;
-        const bedsToReserve = Math.min(10, isolationBeds.total - isolationBeds.occupied);
+        const bedsToReserve = Math.min(10, isolationBeds.total - isolationBeds.used);
         if (bedsToReserve > 0) {
           // Actually occupy beds to prepare the ward
-          isolationBeds.occupied = Math.min(isolationBeds.total, isolationBeds.occupied + Math.floor(bedsToReserve / 2));
+          isolationBeds.used = Math.min(isolationBeds.total, isolationBeds.used + Math.floor(bedsToReserve / 2));
           
           this.log(
-            `🛏️ ${h.name}: Preparing isolation ward for ${disease} - Occupancy increased to ${isolationBeds.occupied}/${isolationBeds.total} beds`,
+            `🛏️ ${h.name}: Preparing isolation ward for ${disease} - Occupancy increased to ${isolationBeds.used}/${isolationBeds.total} beds`,
             { 
               agent: 'Hospital', 
               type: 'BED_ALLOCATION', 
               entityId: this.id, 
               disease,
-              bedsOccupied: isolationBeds.occupied
+              bedsOccupied: isolationBeds.used
             }
           );
         }
         
         // Also prepare general beds
         const generalBeds = h.beds.general;
-        const generalToPrep = Math.min(5, generalBeds.total - generalBeds.occupied);
+        const generalToPrep = Math.min(5, generalBeds.total - generalBeds.used);
         if (generalToPrep > 0) {
-          generalBeds.occupied = Math.min(generalBeds.total, generalBeds.occupied + generalToPrep);
+          generalBeds.used = Math.min(generalBeds.total, generalBeds.used + generalToPrep);
         }
       }
 

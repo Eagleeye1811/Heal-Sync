@@ -18,107 +18,148 @@ module.exports = (worldState, getLogs, log) => {
 
   // === SCENARIO TRIGGERS ===
 
-  // Scenario 1: Dengue Outbreak
+  // Scenario 1: Dengue Outbreak (PROGRESSIVE)
   router.post('/simulate/dengue', (req, res) => {
     // City Agent announces scenario trigger
     if (log) {
       log(
-        '🚨 SCENARIO TRIGGERED: Dengue Outbreak - Activating emergency response protocol across all zones',
+        '🚨 SCENARIO TRIGGERED: Dengue Outbreak - Gradual spread initiating across zones',
         { agent: 'City', type: 'SCENARIO_TRIGGER', entityId: 'CITY', scenario: 'dengue' }
       );
     }
 
-    // Increase dengue tests in both labs
-    Object.keys(worldState.labs).forEach(labId => {
-      const lab = worldState.labs[labId];
-      if (lab.testData && lab.testData.dengue) {
-        const previousToday = lab.testData.dengue.today;
-        lab.testData.dengue.today += 25;
-        lab.testData.dengue.positive += 15;
-        lab.testData.dengue.negative += 10;
-        
-        // Update history
-        if (!lab.testData.dengue.history) lab.testData.dengue.history = [];
-        lab.testData.dengue.history.push(lab.testData.dengue.today);
-        lab.testData.dengue.history = lab.testData.dengue.history.slice(-14);
+    // PROGRESSIVE OUTBREAK: Spread gradually over 2 minutes
+    let tick = 0;
+    const maxTicks = 12; // 2 minutes (every 10 seconds)
+    
+    const outbreakInterval = setInterval(() => {
+      Object.keys(worldState.labs).forEach(labId => {
+        const lab = worldState.labs[labId];
+        if (lab.testData && lab.testData.dengue) {
+          // Exponential growth: increases more each tick
+          const growth = Math.floor(2 + (tick * 1.5)); // 2, 3, 5, 6, 8...
+          const previousToday = lab.testData.dengue.today;
+          
+          lab.testData.dengue.today += growth;
+          lab.testData.dengue.positive += Math.floor(growth * 0.6); // 60% positive rate
+          lab.testData.dengue.negative += Math.ceil(growth * 0.4);
+          
+          // Update history every 3 ticks
+          if (tick % 3 === 0) {
+            if (!lab.testData.dengue.history) lab.testData.dengue.history = [];
+            lab.testData.dengue.history.push(lab.testData.dengue.today);
+            lab.testData.dengue.history = lab.testData.dengue.history.slice(-14);
+          }
 
-        // Log the spike
+          // Log the growth
+          if (log && tick % 2 === 0) { // Log every other tick
+            log(
+              `📈 ${lab.name}: Dengue tests rising - now at ${lab.testData.dengue.today} tests (+${growth} new, ${Math.floor(growth * 0.6)} positive)`,
+              { agent: 'Lab', type: 'OUTBREAK_PROGRESS', entityId: labId, disease: 'dengue', tick }
+            );
+          }
+
+          // Trigger outbreak alert after reaching threshold (tick 5)
+          if (tick === 5) {
+            publish('DENGUE_OUTBREAK_PREDICTED', {
+              labId,
+              zone: lab.zone,
+              disease: 'dengue',
+              today: lab.testData.dengue.today,
+              positive: lab.testData.dengue.positive,
+              previousToday,
+              growthRate: ((lab.testData.dengue.today - previousToday) / Math.max(previousToday, 1) * 100).toFixed(1),
+              riskLevel: 'critical',
+              confidence: 0.95
+            });
+          }
+        }
+      });
+
+      // Increase city dengue cases
+      if (worldState.city && worldState.city.diseaseStats && worldState.city.diseaseStats.dengue) {
+        const caseIncrease = Math.floor(1 + tick * 1.2);
+        worldState.city.diseaseStats.dengue.newToday += caseIncrease;
+        worldState.city.diseaseStats.dengue.activeCases += caseIncrease;
+      }
+
+      tick++;
+      if (tick >= maxTicks) {
+        clearInterval(outbreakInterval);
         if (log) {
           log(
-            `⚠️ ${lab.name}: DENGUE SPIKE DETECTED! Tests jumped from ${previousToday} to ${lab.testData.dengue.today} (+${25} tests, ${15} positive)`,
-            { agent: 'Lab', type: 'OUTBREAK_DETECTED', entityId: labId, disease: 'dengue' }
+            '🔴 DENGUE OUTBREAK: Peak reached - hospitals and pharmacies coordinating response',
+            { agent: 'City', type: 'OUTBREAK_PEAK', entityId: 'CITY', scenario: 'dengue' }
           );
         }
-
-        // Trigger immediate outbreak detection
-        publish('DENGUE_OUTBREAK_PREDICTED', {
-          labId,
-          zone: lab.zone,
-          disease: 'dengue',
-          today: lab.testData.dengue.today,
-          positive: lab.testData.dengue.positive,
-          previousToday,
-          growthRate: ((25 / Math.max(previousToday, 1)) * 100).toFixed(1),
-          riskLevel: 'critical',
-          confidence: 0.95
-        });
       }
-    });
+    }, 10000); // Every 10 seconds
 
-    // Increase city dengue cases
-    if (worldState.city && worldState.city.diseaseStats && worldState.city.diseaseStats.dengue) {
-      worldState.city.diseaseStats.dengue.newToday += 15;
-      worldState.city.diseaseStats.dengue.activeCases += 15;
-    }
-
-    res.json({ ok: true, message: 'Dengue outbreak simulated - Labs showing increased positive tests' });
+    res.json({ ok: true, message: 'Dengue outbreak initiated - watch it spread progressively over 2 minutes!' });
   });
 
-  // Scenario 2: Malaria Outbreak
+  // Scenario 2: Malaria Outbreak (PROGRESSIVE)
   router.post('/simulate/malaria', (req, res) => {
     if (log) {
       log(
-        '🚨 SCENARIO TRIGGERED: Malaria Outbreak - Activating emergency response protocol',
+        '🚨 SCENARIO TRIGGERED: Malaria Outbreak - Gradual spread pattern detected',
         { agent: 'City', type: 'SCENARIO_TRIGGER', entityId: 'CITY', scenario: 'malaria' }
       );
     }
 
-    Object.keys(worldState.labs).forEach(labId => {
-      const lab = worldState.labs[labId];
-      if (lab.testData && lab.testData.malaria) {
-        const previousToday = lab.testData.malaria.today;
-        lab.testData.malaria.today += 20;
-        lab.testData.malaria.positive += 12;
-        lab.testData.malaria.negative += 8;
-        if (!lab.testData.malaria.history) lab.testData.malaria.history = [];
-        lab.testData.malaria.history.push(lab.testData.malaria.today);
-        lab.testData.malaria.history = lab.testData.malaria.history.slice(-14);
+    // PROGRESSIVE OUTBREAK: Spread over 1.5 minutes
+    let tick = 0;
+    const maxTicks = 9;
+    
+    const outbreakInterval = setInterval(() => {
+      Object.keys(worldState.labs).forEach(labId => {
+        const lab = worldState.labs[labId];
+        if (lab.testData && lab.testData.malaria) {
+          const growth = Math.floor(2 + (tick * 1.2));
+          const previousToday = lab.testData.malaria.today;
+          
+          lab.testData.malaria.today += growth;
+          lab.testData.malaria.positive += Math.floor(growth * 0.5);
+          lab.testData.malaria.negative += Math.ceil(growth * 0.5);
+          
+          if (tick % 3 === 0) {
+            if (!lab.testData.malaria.history) lab.testData.malaria.history = [];
+            lab.testData.malaria.history.push(lab.testData.malaria.today);
+            lab.testData.malaria.history = lab.testData.malaria.history.slice(-14);
+          }
 
-        if (log) {
-          log(
-            `⚠️ ${lab.name}: MALARIA SPIKE DETECTED! Tests: ${previousToday} → ${lab.testData.malaria.today} (+${12} positive)`,
-            { agent: 'Lab', type: 'OUTBREAK_DETECTED', entityId: labId, disease: 'malaria' }
-          );
+          if (log && tick % 2 === 0) {
+            log(
+              `📈 ${lab.name}: Malaria cases climbing - ${lab.testData.malaria.today} tests (+${growth} new)`,
+              { agent: 'Lab', type: 'OUTBREAK_PROGRESS', entityId: labId, disease: 'malaria', tick }
+            );
+          }
+
+          if (tick === 4) {
+            publish('MALARIA_OUTBREAK_PREDICTED', {
+              labId,
+              zone: lab.zone,
+              disease: 'malaria',
+              today: lab.testData.malaria.today,
+              positive: lab.testData.malaria.positive,
+              riskLevel: 'high',
+              confidence: 0.90
+            });
+          }
         }
+      });
 
-        publish('MALARIA_OUTBREAK_PREDICTED', {
-          labId,
-          zone: lab.zone,
-          disease: 'malaria',
-          today: lab.testData.malaria.today,
-          positive: lab.testData.malaria.positive,
-          riskLevel: 'high',
-          confidence: 0.90
-        });
+      if (worldState.city && worldState.city.diseaseStats && worldState.city.diseaseStats.malaria) {
+        const caseIncrease = Math.floor(1 + tick);
+        worldState.city.diseaseStats.malaria.newToday += caseIncrease;
+        worldState.city.diseaseStats.malaria.activeCases += caseIncrease;
       }
-    });
 
-    if (worldState.city && worldState.city.diseaseStats && worldState.city.diseaseStats.malaria) {
-      worldState.city.diseaseStats.malaria.newToday += 12;
-      worldState.city.diseaseStats.malaria.activeCases += 12;
-    }
+      tick++;
+      if (tick >= maxTicks) clearInterval(outbreakInterval);
+    }, 10000);
 
-    res.json({ ok: true, message: 'Malaria outbreak simulated' });
+    res.json({ ok: true, message: 'Malaria outbreak initiated - progressive spread over 1.5 minutes' });
   });
 
   // Scenario 3: Heatwave
@@ -141,7 +182,7 @@ module.exports = (worldState, getLogs, log) => {
       }
       // Occupy more beds
       if (h.beds && h.beds.general) {
-        h.beds.general.occupied = Math.min(h.beds.general.total, h.beds.general.occupied + 10);
+        h.beds.general.used = Math.min(h.beds.general.total, h.beds.general.used + 10);
       }
     });
 
@@ -154,7 +195,7 @@ module.exports = (worldState, getLogs, log) => {
     Object.entries(worldState.hospitals).forEach(([hId, h]) => {
       if (h.zone === 'Zone-2') {
         Object.keys(h.beds).forEach(bedType => {
-          h.beds[bedType].occupied = Math.floor(h.beds[bedType].total * 0.95); // 95% occupancy
+          h.beds[bedType].used = Math.floor(h.beds[bedType].total * 0.95); // 95% occupancy
         });
         if (h.patientMetrics) {
           h.patientMetrics.erWaitingTime = 120; // 2 hours
@@ -184,78 +225,105 @@ module.exports = (worldState, getLogs, log) => {
     res.json({ ok: true, message: 'Medicine shortage simulated - Antivirals and antibiotics depleted' });
   });
 
-  // Scenario 6: COVID Surge
+  // Scenario 6: COVID Surge (PROGRESSIVE)
   router.post('/simulate/covid', (req, res) => {
     if (log) {
       log(
-        '🚨 SCENARIO TRIGGERED: COVID Surge - Activating ICU and isolation protocols',
+        '🚨 SCENARIO TRIGGERED: COVID Surge - Progressive wave pattern detected, ICU protocols activating',
         { agent: 'City', type: 'SCENARIO_TRIGGER', entityId: 'CITY', scenario: 'covid' }
       );
     }
 
-    Object.keys(worldState.labs).forEach(labId => {
-      const lab = worldState.labs[labId];
-      if (lab.testData && lab.testData.covid) {
-        const previousToday = lab.testData.covid.today;
-        lab.testData.covid.today += 30;
-        lab.testData.covid.positive += 18;
-        lab.testData.covid.negative += 12;
-        if (!lab.testData.covid.history) lab.testData.covid.history = [];
-        lab.testData.covid.history.push(lab.testData.covid.today);
-        lab.testData.covid.history = lab.testData.covid.history.slice(-14);
+    // PROGRESSIVE OUTBREAK: COVID spreads over 2.5 minutes
+    let tick = 0;
+    const maxTicks = 15;
+    
+    const outbreakInterval = setInterval(() => {
+      Object.keys(worldState.labs).forEach(labId => {
+        const lab = worldState.labs[labId];
+        if (lab.testData && lab.testData.covid) {
+          const growth = Math.floor(2 + (tick * 1.8)); // Faster growth
+          const previousToday = lab.testData.covid.today;
+          
+          lab.testData.covid.today += growth;
+          lab.testData.covid.positive += Math.floor(growth * 0.65); // 65% positive
+          lab.testData.covid.negative += Math.ceil(growth * 0.35);
+          
+          if (tick % 3 === 0) {
+            if (!lab.testData.covid.history) lab.testData.covid.history = [];
+            lab.testData.covid.history.push(lab.testData.covid.today);
+            lab.testData.covid.history = lab.testData.covid.history.slice(-14);
+          }
 
-        if (log) {
-          log(
-            `⚠️ ${lab.name}: COVID SURGE DETECTED! Tests: ${previousToday} → ${lab.testData.covid.today} (+${18} positive cases)`,
-            { agent: 'Lab', type: 'OUTBREAK_DETECTED', entityId: labId, disease: 'covid' }
-          );
+          if (log && tick % 2 === 0) {
+            log(
+              `📈 ${lab.name}: COVID surge intensifying - ${lab.testData.covid.today} tests (+${growth} new, ${Math.floor(growth * 0.65)} positive)`,
+              { agent: 'Lab', type: 'OUTBREAK_PROGRESS', entityId: labId, disease: 'covid', tick }
+            );
+          }
+
+          if (tick === 6) {
+            publish('COVID_OUTBREAK_PREDICTED', {
+              labId,
+              zone: lab.zone,
+              disease: 'covid',
+              today: lab.testData.covid.today,
+              positive: lab.testData.covid.positive,
+              riskLevel: 'critical',
+              confidence: 0.95
+            });
+          }
         }
+      });
 
-        publish('COVID_OUTBREAK_PREDICTED', {
-          labId,
-          zone: lab.zone,
-          disease: 'covid',
-          today: lab.testData.covid.today,
-          positive: lab.testData.covid.positive,
-          riskLevel: 'critical',
-          confidence: 0.95
+      if (worldState.city && worldState.city.diseaseStats && worldState.city.diseaseStats.covid) {
+        const caseIncrease = Math.floor(1 + tick * 1.3);
+        worldState.city.diseaseStats.covid.newToday += caseIncrease;
+        worldState.city.diseaseStats.covid.activeCases += caseIncrease;
+      }
+
+      // Gradually fill ICU and isolation beds
+      if (tick % 3 === 0) {
+        Object.keys(worldState.hospitals).forEach(hId => {
+          const h = worldState.hospitals[hId];
+          if (h.beds) {
+            if (h.beds.icu && h.beds.icu.used < h.beds.icu.total) {
+              const icuBefore = h.beds.icu.used;
+              h.beds.icu.used = Math.min(h.beds.icu.total, h.beds.icu.used + 1);
+              if (log && h.beds.icu.used > icuBefore) {
+                log(
+                  `🏥 ${h.name}: ICU filling - now ${h.beds.icu.used}/${h.beds.icu.total} occupied`,
+                  { agent: 'Hospital', type: 'BED_ALLOCATION', entityId: hId }
+                );
+              }
+            }
+            if (h.beds.isolation && h.beds.isolation.used < h.beds.isolation.total) {
+              const isolationBefore = h.beds.isolation.used;
+              h.beds.isolation.used = Math.min(h.beds.isolation.total, h.beds.isolation.used + 2);
+              if (log && h.beds.isolation.used > isolationBefore && tick % 6 === 0) {
+                log(
+                  `🏥 ${h.name}: Isolation ward expanding - ${h.beds.isolation.used}/${h.beds.isolation.total} beds`,
+                  { agent: 'Hospital', type: 'BED_ALLOCATION', entityId: hId }
+                );
+              }
+            }
+          }
         });
       }
-    });
 
-    if (worldState.city && worldState.city.diseaseStats && worldState.city.diseaseStats.covid) {
-      worldState.city.diseaseStats.covid.newToday += 18;
-      worldState.city.diseaseStats.covid.activeCases += 18;
-    }
-
-    // Increase ICU and isolation bed usage
-    Object.keys(worldState.hospitals).forEach(hId => {
-      const h = worldState.hospitals[hId];
-      if (h.beds) {
-        if (h.beds.icu) {
-          const icuBefore = h.beds.icu.occupied;
-          h.beds.icu.occupied = Math.min(h.beds.icu.total, h.beds.icu.occupied + 3);
-          if (log && h.beds.icu.occupied > icuBefore) {
-            log(
-              `🏥 ${h.name}: Preparing ICU beds for COVID patients - ICU occupancy now ${h.beds.icu.occupied}/${h.beds.icu.total}`,
-              { agent: 'Hospital', type: 'BED_ALLOCATION', entityId: hId }
-            );
-          }
-        }
-        if (h.beds.isolation) {
-          const isolationBefore = h.beds.isolation.occupied;
-          h.beds.isolation.occupied = Math.min(h.beds.isolation.total, h.beds.isolation.occupied + 8);
-          if (log && h.beds.isolation.occupied > isolationBefore) {
-            log(
-              `🏥 ${h.name}: Activating isolation wards - Isolation beds now ${h.beds.isolation.occupied}/${h.beds.isolation.total}`,
-              { agent: 'Hospital', type: 'BED_ALLOCATION', entityId: hId }
-            );
-          }
+      tick++;
+      if (tick >= maxTicks) {
+        clearInterval(outbreakInterval);
+        if (log) {
+          log(
+            '🔴 COVID SURGE: Peak wave reached - all healthcare facilities in coordinated response mode',
+            { agent: 'City', type: 'OUTBREAK_PEAK', entityId: 'CITY', scenario: 'covid' }
+          );
         }
       }
-    });
+    }, 10000);
 
-    res.json({ ok: true, message: 'COVID surge simulated - ICU and isolation beds filling up' });
+    res.json({ ok: true, message: 'COVID surge initiated - progressive spread over 2.5 minutes with ICU impact' });
   });
 
   // Scenario 7: Reset to Normal

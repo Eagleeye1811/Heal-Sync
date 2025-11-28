@@ -25,8 +25,11 @@ class LabAgent {
     const lab = this.worldState.labs[this.id];
     if (!lab) return;
 
-    // Calculate total tests and positive rates
+    // DYNAMIC SIMULATION: Simulate natural test growth and disease patterns
     const diseases = ['dengue', 'malaria', 'typhoid', 'influenza', 'covid'];
+    this.simulateNaturalTestGrowth(lab, diseases);
+
+    // Calculate total tests and positive rates
     const totalTests = Object.values(lab.testData).reduce((sum, data) => sum + (data.today || 0), 0);
     const totalPositive = Object.values(lab.testData).reduce((sum, data) => sum + (data.positive || 0), 0);
     const positiveRate = totalTests > 0 ? ((totalPositive / totalTests) * 100).toFixed(1) : 0;
@@ -51,6 +54,108 @@ class LabAgent {
     
     // Check lab capacity
     this.checkLabCapacity(lab);
+  }
+
+  simulateNaturalTestGrowth(lab, diseases) {
+    // Simulate realistic disease test patterns with natural variation
+    diseases.forEach(disease => {
+      const testData = lab.testData[disease];
+      if (!testData) return;
+      
+      // Get seasonal factor for this disease
+      const seasonalFactor = this.getSeasonalFactor(disease);
+      
+      // Base variation: -3 to +8 tests per tick with seasonal influence
+      const baseChange = Math.floor((Math.random() * 11 - 3) * seasonalFactor);
+      
+      // Apply change
+      const previousValue = testData.today;
+      testData.today = Math.max(0, testData.today + baseChange);
+      
+      // Update history if significant change (every 6 ticks = ~1 minute)
+      if (!testData.tickCount) testData.tickCount = 0;
+      testData.tickCount++;
+      
+      if (testData.tickCount >= 6) {
+        testData.tickCount = 0;
+        // Add to history (keep last 7 entries)
+        if (!testData.history) testData.history = [];
+        testData.history.push(previousValue);
+        if (testData.history.length > 7) {
+          testData.history.shift();
+        }
+      }
+      
+      // Update positive cases (realistic 8-25% positive rate with variation)
+      const basePositiveRate = 0.08 + (Math.random() * 0.17); // 8-25%
+      testData.positive = Math.floor(testData.today * basePositiveRate);
+      testData.positiveRate = testData.today > 0 ? 
+        ((testData.positive / testData.today) * 100).toFixed(1) : 0;
+      
+      // Randomly trigger mini-spikes (5% chance per tick)
+      if (Math.random() < 0.05) {
+        const spike = Math.floor(Math.random() * 8 + 3); // 3-10 test spike
+        testData.today += spike;
+        testData.positive = Math.floor(testData.today * (basePositiveRate * 1.3)); // Higher positive rate during spike
+      }
+    });
+  }
+
+  getSeasonalFactor(disease) {
+    // Simulate realistic seasonal patterns for diseases
+    const month = new Date().getMonth(); // 0-11
+    const hour = new Date().getHours(); // 0-23
+    
+    // Seasonal patterns
+    let seasonalMultiplier = 1.0;
+    
+    switch(disease) {
+      case 'dengue':
+        // Peak during monsoon (June-September) - months 5-8
+        if ([5, 6, 7, 8].includes(month)) {
+          seasonalMultiplier = 1.6;
+        } else if ([4, 9].includes(month)) {
+          seasonalMultiplier = 1.3;
+        }
+        break;
+        
+      case 'malaria':
+        // Peak post-monsoon (July-October) - months 6-9
+        if ([6, 7, 8, 9].includes(month)) {
+          seasonalMultiplier = 1.5;
+        }
+        break;
+        
+      case 'influenza':
+        // Peak in winter (November-February) - months 10,11,0,1
+        if ([10, 11, 0, 1].includes(month)) {
+          seasonalMultiplier = 1.7;
+        }
+        break;
+        
+      case 'covid':
+        // Slight increase in winter - months 11,0,1
+        if ([11, 0, 1].includes(month)) {
+          seasonalMultiplier = 1.3;
+        }
+        break;
+        
+      case 'typhoid':
+        // Peak in summer (April-June) - months 3-5
+        if ([3, 4, 5].includes(month)) {
+          seasonalMultiplier = 1.4;
+        }
+        break;
+    }
+    
+    // Time-of-day factor: More tests in morning hours (8am-12pm)
+    if (hour >= 8 && hour <= 12) {
+      seasonalMultiplier *= 1.2;
+    } else if (hour >= 13 && hour <= 16) {
+      seasonalMultiplier *= 1.1;
+    }
+    
+    return seasonalMultiplier;
   }
 
   checkDiseaseOutbreak(lab, disease) {

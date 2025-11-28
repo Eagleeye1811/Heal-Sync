@@ -61,11 +61,22 @@ class PharmacyAgent {
   }
 
   consumeMedicines(pharmacy) {
-    // Simulate medicine usage over time (for demo purposes)
+    // Simulate realistic medicine usage over time
     Object.entries(pharmacy.medicines).forEach(([medName, medicine]) => {
       if (medicine.usagePerDay && medicine.usagePerDay > 0) {
-        // Consume a small amount each tick (every 12 seconds = 0.2% of daily usage)
-        const consumptionAmount = Math.ceil(medicine.usagePerDay * 0.002);
+        // INCREASED CONSUMPTION: every 12 seconds = 1.5% of daily usage (was 0.2%)
+        // This makes medicine depletion visible and triggers agent action
+        let consumptionRate = 0.015; // Base rate: 1.5%
+        
+        // Increase consumption during outbreaks or high demand periods
+        if (pharmacy.demandMultiplier && pharmacy.demandMultiplier[medName]) {
+          consumptionRate *= pharmacy.demandMultiplier[medName];
+        }
+        
+        // Random variation: 80-120% of expected consumption
+        const randomFactor = 0.8 + (Math.random() * 0.4);
+        const consumptionAmount = Math.ceil(medicine.usagePerDay * consumptionRate * randomFactor);
+        
         if (medicine.stock > 0) {
           medicine.stock = Math.max(0, medicine.stock - consumptionAmount);
         }
